@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "9841836723",
+    "firebase_url": "https://motor-f86d4-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "motor-f86d4",
+    "storage_bucket": "motor-f86d4.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:9841836723:android:cb12f1dd03e677cf71e6c6",
+        "android_client_info": {
+          "package_name": "com.example.induction_motor_controller"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDlhUgEfaqmIVjIeOD6m5bpWxA5NiLZIe8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
