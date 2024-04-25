@@ -3,7 +3,10 @@
     <style name="Base.Theme.InductionMotorController" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your light theme here. -->
         <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        <item name="colorOnBackground">@color/white</item>
+        <item name="colorOnPrimary">@color/black</item>
     </style>
 
     <style name="Theme.InductionMotorController" parent="Base.Theme.InductionMotorController" />
+
 </resources>

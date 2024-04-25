@@ -1,14 +1,19 @@
 package com.example.induction_motor_controller;
 
 
+import static com.example.induction_motor_controller.DistanceThreadBackground.distMeter;
+
 import android.Manifest;
+import android.app.AlertDialog;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.view.View;
 import android.widget.Button;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -17,74 +22,102 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.AppCompatSeekBar;
+import androidx.appcompat.widget.PopupMenu;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.switchmaterial.SwitchMaterial;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
 public class MainActivity extends AppCompatActivity {
 
     private static final int MY_PERMISSIONS_REQUEST_POST_NOTIFICATIONS = 129;
     int isMachineOn = 0;
     int machineClockVise = 0;
-    int motorSpeed = 0;
+    public static int motorSpeed = 0;
     int motorTemp = 0;
     int motorExceedTemp = 0;
     int motorVibr = 0;
 
-    int minimum_speed = 200, maximum_speed = 1024;
+    public static int minimum_speed = 200, maximum_speed = 1024;
 
     int normal_color, gray_color;
     boolean notificationAllowed = false;
 
     FirebaseDatabase db;
     DatabaseReference dbRef;
+    FirebaseAuth mAuth;
+    FirebaseUser currentUser;
 
     TextView motor_is_on_txt, machine_temp_txt, clock_anti_clock_txt, motor_speed_txt, machine_speed_txt_head,
             machine_temp_txt_head, vibration_status_txt_head, vibration_status_txt,
-            total_distance_travelled_txt_head, total_distance_travelled_txt;
+            total_distance_travelled_txt_head, total_distance_travelled_txt, machine_name_txt, user_name_txt;
     SwitchMaterial clock_anti_clock_switch;
-    Button turn_on_motor_btn;
+    MaterialButton turn_on_motor_btn;
     AppCompatSeekBar motor_speed_seek;
+    MaterialCardView profile_card;
 
 
     //    listeners
     ValueEventListener temp_event_listener, motor_speed_event_listener, motor_event_on_listener,
-            clock_anti_clock_listener, vibr_event_listener;
+            clock_anti_clock_listener, vibr_event_listener, user_name_event_listener, motor_name_event_listener;
+
+    DistanceThreadBackground distanceThreadBackground;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this,
-                        new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                        MY_PERMISSIONS_REQUEST_POST_NOTIFICATIONS);
-            } else {
-                notificationAllowed = true;
+        mAuth = FirebaseAuth.getInstance();
+
+        // Check if user is already logged in
+        currentUser = mAuth.getCurrentUser();
+        if (currentUser == null) {
+            // User is not logged in, redirect to RegisterActivity
+            startActivity(new Intent(MainActivity.this, LoginActivity.class));
+            finish();
+        } else {
+//            user already logged in
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(this,
+                            new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                            MY_PERMISSIONS_REQUEST_POST_NOTIFICATIONS);
+                } else {
+                    notificationAllowed = true;
+                }
             }
+
+//            notification code start
+            NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel("my_channel_id", "My Channel", NotificationManager.IMPORTANCE_DEFAULT);
+                channel.setDescription("This is my channel");
+                notificationManager.createNotificationChannel(channel);
+            }
+//            notification code end
+
+            findViews();
+            connectDB();
         }
-
-        NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel("my_channel_id", "My Channel", NotificationManager.IMPORTANCE_DEFAULT);
-            channel.setDescription("This is my channel");
-            notificationManager.createNotificationChannel(channel);
-        }
-
-        findViews();
-        connectDB();
     }
 
     @Override
@@ -102,6 +135,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+//    machine is off so reduce colors of all the machine details text
     private void machineIsOff() {
         machine_speed_txt_head.setAlpha(0.6f);
         machine_temp_txt_head.setAlpha(0.6f);
@@ -118,6 +152,7 @@ public class MainActivity extends AppCompatActivity {
         motor_speed_seek.setEnabled(false);
     }
 
+//    machine is on so re bright colors of all the machine details text
     private void machineIsOn() {
         machine_speed_txt_head.setAlpha(1f);
         machine_temp_txt_head.setAlpha(1f);
@@ -139,6 +174,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         getActualValues();
         performActions();
+        calculateTime((isMachineOn == 1));
     }
 
     @Override
@@ -147,6 +183,7 @@ public class MainActivity extends AppCompatActivity {
         refuseEventListeners();
     }
 
+//    if temperature gets high than actual temperature limit then it shows notification
     private void tempNotification(int temperature) {
         String celcius = (char) 0x00B0+"c";
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "my_channel_id")
@@ -160,6 +197,7 @@ public class MainActivity extends AppCompatActivity {
         notificationManager.notify(1, builder.build());
     }
 
+//    if vibration found in machine then notify
     private void vibrationNotification() {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "my_channel_id")
                 .setSmallIcon(R.mipmap.ic_alert)
@@ -172,14 +210,18 @@ public class MainActivity extends AppCompatActivity {
         notificationManager.notify(2, builder.build());
     }
 
+//    when app is closed then revoke all listening ability
     private void refuseEventListeners() {
         dbRef.removeEventListener(temp_event_listener);
         dbRef.removeEventListener(motor_speed_event_listener);
         dbRef.removeEventListener(motor_event_on_listener);
         dbRef.removeEventListener(clock_anti_clock_listener);
         dbRef.removeEventListener(vibr_event_listener);
+        dbRef.removeEventListener(user_name_event_listener);
+        dbRef.removeEventListener(motor_name_event_listener);
     }
 
+//    initializing views
     private void findViews() {
         motor_is_on_txt = MainActivity.this.findViewById(R.id.main_txt);
         machine_temp_txt = findViewById(R.id.machine_temp);
@@ -194,11 +236,18 @@ public class MainActivity extends AppCompatActivity {
         vibration_status_txt = findViewById(R.id.machine_vibr);
         total_distance_travelled_txt_head = findViewById(R.id.machine_dist_travel_text);
         total_distance_travelled_txt = findViewById(R.id.machine_dist_travel);
+        machine_name_txt = findViewById(R.id.machine_name_txt);
+        user_name_txt = findViewById(R.id.user_name);
+        profile_card = findViewById(R.id.profile_card);
 
         gray_color = Color.parseColor("#808080");
         normal_color = motor_is_on_txt.getCurrentTextColor();
+
+//        created thread object at initial level
+        distanceThreadBackground = new DistanceThreadBackground();
     }
 
+//    database connection
     private void connectDB() {
         db = FirebaseDatabase.getInstance();
         dbRef = db.getReference();
@@ -206,25 +255,16 @@ public class MainActivity extends AppCompatActivity {
 
     Handler handler;
     Runnable runnable;
+//    showing distance from machine start and saving to database and calculating time
     private void calculateTime(boolean isOn) {
         if (handler == null)
             handler = new Handler();
         if (isOn) {
-            long startTime = System.currentTimeMillis();
             runnable = new Runnable() {
                 @Override
                 public void run() {
-                    long currentTime = System.currentTimeMillis();
-                    long elapsedTime = currentTime - startTime;
-                    long seconds = elapsedTime / 1000;
-                    int rpm = getRealRPM(motorSpeed);
-
-                    double distInches = rpm * Math.PI * 2.75591 /* wheel size in inches */ * ((double) seconds / 60);
-                    double distMeter = distInches / 39.37;
                     total_distance_travelled_txt.setText(String.format("%.2f m", distMeter));
-
                     dbRef.child("dist").setValue(distMeter);
-
                     handler.postDelayed(this, 1000);
                 }
             };
@@ -233,15 +273,12 @@ public class MainActivity extends AppCompatActivity {
             handler.removeCallbacks(runnable);
             runnable = null;
             total_distance_travelled_txt.setText("0");
-            dbRef.child("dist").setValue(0);
+            dbRef.child( "dist").setValue(0);
         }
     }
 
+//    initializing listeners and assinging to it
     private void getActualValues() {
-//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-//            motor_speed_seek.setMin(minimum_speed);
-//            motor_speed_seek.setMax(maximum_speed);
-//        }
 
         clock_anti_clock_listener = new ValueEventListener() {
             @Override
@@ -279,11 +316,18 @@ public class MainActivity extends AppCompatActivity {
                     str_txt = "Machine is On";
                     txt_color = Color.parseColor("#00ff00");
                     isMotorOn = true;
+                    if (distanceThreadBackground != null && !distanceThreadBackground.isAlive())
+                        distanceThreadBackground.start();
                 } else {
                     btn_txt = "Turn On Motor";
                     str_txt = "Machine is Off";
                     txt_color = normal_color;
                     isMotorOn = false;
+                    if (distanceThreadBackground != null) {
+                        distanceThreadBackground.stopThread();
+                        distanceThreadBackground = new DistanceThreadBackground();
+                        distMeter = 0;
+                    }
                 }
                 turn_on_motor_btn.setText(btn_txt);
                 motor_is_on_txt.setText(str_txt);
@@ -332,6 +376,8 @@ public class MainActivity extends AppCompatActivity {
                     String temp_str = motorTemp + celcius;
                     machine_temp_txt.setText(temp_str);
                     machine_temp_txt.setTextColor(colorTemp);
+
+                    tempEventOccurred(motorTemp);
                 });
             }
 
@@ -365,6 +411,38 @@ public class MainActivity extends AppCompatActivity {
             }
         };
 
+        user_name_event_listener = new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot dataSnapshot) {
+                String value = dataSnapshot.getValue(String.class);
+                if (value == null)
+                    value = "None";
+                user_name_txt.setText(value);
+            }
+
+            @Override
+            public void onCancelled(DatabaseError databaseError) {
+                // Handle potential errors here
+            }
+        };
+
+        motor_name_event_listener = new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot dataSnapshot) {
+                String value = dataSnapshot.getValue(String.class);
+                if (value == null)
+                    value = "None";
+                machine_name_txt.setText(value + " : ");
+            }
+
+            @Override
+            public void onCancelled(DatabaseError databaseError) {
+                // Handle potential errors here
+            }
+        };
+
+
+
         dbRef.child("motord").addValueEventListener(clock_anti_clock_listener);
 
         dbRef.child("motor").addValueEventListener(motor_event_on_listener);
@@ -374,9 +452,108 @@ public class MainActivity extends AppCompatActivity {
         dbRef.child("Temp").addValueEventListener(temp_event_listener);
 
         dbRef.child("vsen").addValueEventListener(vibr_event_listener);
+
+        dbRef.child("users/" + currentUser.getUid() + "/userName").addValueEventListener(user_name_event_listener);
+
+        dbRef.child("users/" + currentUser.getUid() + "/motorName").addValueEventListener(motor_name_event_listener);
+
     }
 
+//    saving daily high temperature to current logged in user
+    private void tempEventOccurred(int motorTemp) {
+        dbRef.child("users/" + currentUser.getUid()).addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+                // Handle the data here
+
+                UserPojo userPojo = dataSnapshot.getValue(UserPojo.class);
+                if (userPojo != null) {
+                    List<DailyLogPojo> dailyLogList = userPojo.getDailyLog();
+                    DailyLogPojo dailyLog;
+
+                    if (dailyLogList == null) {
+                        dailyLogList = new ArrayList<>();
+                    }
+
+                    Date currentDate = new Date();
+                    SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+                    String formattedDate = dateFormat.format(currentDate);
+
+                    if (dailyLogList.size() > 0) {
+                        dailyLog = dailyLogList.get(dailyLogList.size() - 1);
+                        if (formattedDate.equals(dailyLog.getDate())) {
+                            dailyLog.setHigh_temp(Math.max(dailyLog.getHigh_temp(), motorTemp));
+                            dailyLogList.set(dailyLogList.size() - 1, dailyLog);
+                        } else {
+//                    date not matched create new date
+                            dailyLog = new DailyLogPojo(formattedDate, motorTemp);
+                            dailyLogList.add(dailyLogList.size(), dailyLog);
+                        }
+                    } else {
+                        dailyLog = new DailyLogPojo(formattedDate, motorTemp);
+                        dailyLogList.add(dailyLog);
+                    }
+
+                    dbRef.child("users/" + currentUser.getUid() + "/dailyLog").setValue(dailyLogList);
+                }
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError databaseError) {
+            }
+        });
+
+    }
+
+//    performing action's to every button clicks
     private void performActions() {
+        
+        profile_card.setOnClickListener(view -> {
+            PopupMenu popupMenu = new PopupMenu(MainActivity.this, view);
+            popupMenu.getMenuInflater().inflate(R.menu.profile_menu, popupMenu.getMenu());
+
+            // Handle menu item clicks
+            popupMenu.setOnMenuItemClickListener(item -> {
+                int itemId = item.getItemId();
+                if (itemId == R.id.menu_dashboard) {
+                    Intent intent = new Intent(MainActivity.this, UserDashboardActivity.class);
+                    startActivity(intent);
+                    return true;
+                } else if (itemId == R.id.menu_logout) {
+                    AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
+
+                    View dialogView = getLayoutInflater().inflate(R.layout.logout_alert_dialog, null);
+                    builder.setView(dialogView);
+
+                    TextView dialogTitle = dialogView.findViewById(R.id.dialog_title);
+                    TextView dialogMessage = dialogView.findViewById(R.id.dialog_message);
+                    dialogTitle.setText("Confirm Logout");
+                    dialogMessage.setText("Are you sure you want to log out?");
+
+                    Button btnCancel = dialogView.findViewById(R.id.btn_cancel);
+                    Button btnLogout = dialogView.findViewById(R.id.btn_logout);
+
+                    AlertDialog alertDialog = builder.create();
+                    alertDialog.show();
+
+                    btnCancel.setOnClickListener(v -> {
+                        alertDialog.dismiss();
+                    });
+
+                    btnLogout.setOnClickListener(v -> {
+                        logOutUser();
+                        alertDialog.dismiss();
+                    });
+
+                    return true;
+                } else {
+                    return false;
+                }
+            });
+
+            popupMenu.show();
+        });
+        
         turn_on_motor_btn.setOnClickListener(v -> {
             int newIsMachineOn = (isMachineOn == 0) ? 1 : 0;
             dbRef.child("motor").setValue(newIsMachineOn).addOnCompleteListener(task -> {
@@ -409,7 +586,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
-                dbRef.child("motors").setValue(seekBar.getProgress()).addOnCompleteListener(task -> {
+                dbRef.child( "motors").setValue(seekBar.getProgress()).addOnCompleteListener(task -> {
                     if (!task.isSuccessful())
                         Toast.makeText(MainActivity.this, "Failed to update Speed", Toast.LENGTH_SHORT).show();
                 });
@@ -418,16 +595,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
+//    logout current user method
+    private void logOutUser() {
+        if (mAuth == null)
+            mAuth = FirebaseAuth.getInstance();
+        mAuth.signOut();
 
-//    other methods
-    private int getRealRPM(int currentValue) {
-        int originalMin = minimum_speed;
-        int originalMax = maximum_speed;
-
-        int newMin = 0;
-        int newMax = 30;
-
-        int mappedValue = (int) (((float) (currentValue - originalMin) / (originalMax - originalMin)) * (newMax - newMin) + newMin);
-        return mappedValue;
+//        finish this screen and start login screen
+        startActivity(new Intent(MainActivity.this, LoginActivity.class));
+        finish();
     }
+
 }
